@@ -2,7 +2,11 @@
 #include "timeex.hpp"
 #include "net/rtprtcp/rtcp_rr.hpp"
 #include "net/rtprtcp/rtcpfb_nack.hpp"
+#include "utils/byte_crypto.hpp"
+#include "json.hpp"
 #include <sstream>
+
+using json = nlohmann::json;
 
 rtp_recv_stream::rtp_recv_stream(rtc_stream_callback* cb, std::string media_type, uint32_t ssrc, uint8_t payloadtype,
                     bool is_rtx, int clock_rate):cb_(cb)
@@ -82,24 +86,39 @@ int64_t rtp_recv_stream::get_expected_packets() {
     return cycles_ + max_seq_ - bad_seq_ + 1;
 }
 
-void rtp_recv_stream::on_timer() {
-    const int64_t STATICS_TIMER_COUNT = 12;
-    const int64_t RTCP_RR_AUDIO_COUNT = 4;
+void rtp_recv_stream::on_timer(int64_t now_ms) {
+    const int64_t STATICS_TIMEOUT    = 2500;
+    const int64_t VIDEO_RTCP_TIMEOUT = 400;
+    const int64_t AUDIO_RTCP_TIMEOUT = 2000;
 
-    timer_count_++;
+    if (last_statics_ts_ == 0) {
+        last_statics_ts_ = now_ms;
+    } else {
+        if ((now_ms - last_statics_ts_) > STATICS_TIMEOUT) {
+            size_t fps;
+            size_t speed = recv_statics_.bytes_per_second((int64_t)now_millisec(), fps);
 
-    if ((timer_count_ % STATICS_TIMER_COUNT) == 0) {
-        size_t fps;
-        size_t speed = recv_statics_.bytes_per_second((int64_t)now_millisec(), fps);
-    
-        log_debugf("rtc receive mediatype:%s, ssrc:%u, payloadtype:%d, is_rtx:%d, speed(bytes/s):%lu, fps:%lu",
-            media_type_.c_str(), ssrc_, payloadtype_, has_rtx_, speed, fps);
+            last_statics_ts_ = now_ms;
+        
+            log_debugf("rtc receive mediatype:%s, ssrc:%u, payloadtype:%d, is_rtx:%d, speed(bytes/s):%lu, fps:%lu",
+                media_type_.c_str(), ssrc_, payloadtype_, has_rtx_, speed, fps);
+        }
     }
 
-    if (media_type_ == "video") {
-        send_rtcp_rr();
+    if (last_rtcp_send_ts_ == 0) {
+        last_rtcp_send_ts_ = now_ms;
     } else {
-        if ((timer_count_ % RTCP_RR_AUDIO_COUNT) == 0) {
+        bool rtcp_flag = false;
+        uint32_t rand_number = byte_crypto::get_random_uint(5, 15);
+        float ratio = rand_number / 10.0;
+
+        if (media_type_ == "video") {
+            rtcp_flag = ((now_ms - last_rtcp_send_ts_) * ratio > VIDEO_RTCP_TIMEOUT);
+        } else {
+            rtcp_flag = ((now_ms - last_rtcp_send_ts_) * ratio > AUDIO_RTCP_TIMEOUT);
+        }
+        if (rtcp_flag) {
+            last_rtcp_send_ts_ = now_ms;
             send_rtcp_rr();
         }
     }
@@ -176,24 +195,34 @@ int64_t rtp_recv_stream::get_packet_lost() {
         //    expected_interval, recv_interval, ssrc_, media_type_.c_str());
         total_lost_ += expected_interval - recv_interval;
         frac_lost_ = std::round((double)((expected_interval - recv_interval) * 256) / expected_interval);
+        lost_percent_ = (expected_interval - recv_interval) / expected_interval;
     }
 
     return total_lost_;
 }
 
-void rtp_recv_stream::generate_jitter(uint32_t rtp_timestamp) {
+void rtp_recv_stream::generate_jitter(uint32_t rtp_timestamp, int64_t recv_pkt_ms) {
     if (clock_rate_ <= 0) {
         MS_THROW_ERROR("clock rate(%d) is invalid", clock_rate_);
     }
+    if ((last_pkt_ms_ == 0) || (last_rtp_ts_ == 0)) {
+        return;
+    }
+    int64_t receive_diff_ms = recv_pkt_ms - last_pkt_ms_;
+    uint32_t receive_diff_rtp = static_cast<uint32_t>((receive_diff_ms * clock_rate_) / 1000);
+    int32_t time_diff_samples = receive_diff_rtp - (rtp_timestamp - last_rtp_ts_);
+    time_diff_samples = std::abs(time_diff_samples);
 
-    //D(i,j) = (Rj - Ri) - (Sj - Si) = (Rj - Sj) - (Ri - Si)
-    int64_t diff = now_millisec() - ((int64_t)rtp_timestamp) * 1000 / ((int64_t)clock_rate_);
-    int64_t delay = diff - ts_diff_;
-    ts_diff_ = diff;
-    delay = (delay < 0) ? (-delay) : delay;
-
-    //J(i) = J(i-1) + (|D(i-1,i)| - J(i-1))/16
-    jitter_ += (1.0 / 16.0) * ((double)delay - jitter_);
+    // lib_jingle sometimes deliver crazy jumps in TS for the same stream.
+    // If this happens, don't update jitter value. Use 5 secs video frequency
+    // as the threshold.
+    if (time_diff_samples < 450000) {
+        // Note we calculate in Q4 to avoid using float.
+        int32_t jitter_diff_q4 = (time_diff_samples << 4) - jitter_q4_;
+        jitter_q4_ += ((jitter_diff_q4 + 8) >> 4);
+        jitter_ = jitter_q4_ >> 4;
+    }
+    return;
 }
 
 void rtp_recv_stream::on_handle_rtp(rtp_packet* pkt) {
@@ -206,7 +235,9 @@ void rtp_recv_stream::on_handle_rtp(rtp_packet* pkt) {
         update_seq(pkt->get_seq());
     }
 
-    generate_jitter(pkt->get_timestamp());
+    generate_jitter(pkt->get_timestamp(), pkt->get_local_ms());
+    last_pkt_ms_ = pkt->get_local_ms();
+    last_rtp_ts_ = pkt->get_timestamp();
 
     if (media_type_ == "video" && nack_handle_) {
         log_debugf("receive video pkt ssrc:%u, seq:%d", pkt->get_ssrc(), pkt->get_seq());
@@ -243,4 +274,18 @@ void rtp_recv_stream::generate_nacklist(const std::vector<uint16_t>& seq_vec) {
     cb_->stream_send_rtcp(nack_pkt->get_data(), nack_pkt->get_len());
 
     delete nack_pkt;
+}
+
+void rtp_recv_stream::get_statics(json& json_data) {
+    size_t fps;
+    size_t speed = recv_statics_.bytes_per_second((int64_t)now_millisec(), fps);
+
+    json_data["bps"]       = speed * 8;
+    json_data["fps"]       = fps;
+    json_data["count"]     = recv_statics_.get_count();
+    json_data["bytes"]     = recv_statics_.get_bytes();
+    json_data["jitter"]    = jitter_;
+    json_data["lostper"]   = lost_percent_;
+    json_data["losttotal"] = total_lost_;
+    return;
 }

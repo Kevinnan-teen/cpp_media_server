@@ -8,13 +8,13 @@
     "log_dir":"server.log",
     "log_level": "info",
     "rtmp":{
-        "enable": "yes",
+        "enable": true,
         "listen":1935,
         "gop_cache":"enable"
     },
     "websocket":{
-        "enable": "yes",
-        "listen": 9000
+        "enable": true,
+        "listen": 12000
     }
 }
 ```
@@ -28,18 +28,18 @@ websocket flv模块，通过配置“websocket”的json模块。
 ### 7.2.1 使能websocket flv
 ```markup
 "websocket":{
-    "enable": "yes"
+    "enable": true
     ......
 }
 ```
 ### 7.2.2 配置websocket port
 ```markup
 "websocket":{
-    "enable": "yes",
-    "listen":9000
+    "enable": true,
+    "listen":12000
 }
 ```
-websocket端口号: 9000.
+websocket端口号: 12000.
 
 ## 7.3 websocket推流sdk
 基于webcodec的websocket flv推理: [websocket推流sdk](https://github.com/runner365/webcodecpush)

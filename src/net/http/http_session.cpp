@@ -1,7 +1,34 @@
 #include "http_session.hpp"
 #include "http_server.hpp"
 #include "http_common.hpp"
+#include "utils/stringex.hpp"
 #include <boost/asio.hpp>
+#include <map>
+
+int get_uri_and_params(const std::string& input, std::string& uri, std::map<std::string, std::string>& params) {
+    size_t pos = input.find("?");
+    if (pos == input.npos) {
+        uri = input;
+        return 0;
+    }
+    uri = input.substr(0, pos);
+
+    std::string param_str = input.substr(pos+1);
+    std::vector<std::string> item_vec;
+
+    string_split(param_str, "&", item_vec);
+
+    for (auto& item : item_vec) {
+        std::vector<std::string> param_vec;
+        string_split(item, "=", param_vec);
+        if (param_vec.size() != 2) {
+            return -1;
+        }
+        params[param_vec[0]] =param_vec[1];
+    }
+
+    return 0;
+}
 
 http_session::http_session(boost::asio::ip::tcp::socket socket, http_callbackI* callback) : callback_(callback)
 {
@@ -24,7 +51,6 @@ void http_session::write(const char* data, size_t len) {
     session_ptr_->async_write(data, len);
 }
 
-
 void http_session::close() {
     if (is_closed_) {
         return;
@@ -34,8 +60,8 @@ void http_session::close() {
     if (response_ptr_.get()) {
         response_ptr_->set_close(true);
     }
-    log_infof("http session is closed...");
     session_ptr_->close();
+    callback_->on_close(remote_endpoint_);
     return;
 }
 
@@ -45,27 +71,34 @@ void http_session::on_write(int ret_code, size_t sent_size) {
         close();
     }
     keep_alive();
+
+    response_ptr_->remain_bytes_ -= sent_size;
+    continue_flag_ = response_ptr_->continue_flag_;
+    if (!continue_flag_) {
+        if (!response_ptr_) {
+            return;
+        }    
+        if (response_ptr_->remain_bytes_ <= 0) {
+            close();
+        }
+    }
+    
     return;
 }
 
-void http_session::on_read(int ret_code, const char* data, size_t data_size) {
-    if (ret_code != 0) {
-        close();
-    }
-
+int http_session::handle_request(const char* data, size_t data_size, bool& continue_flag) {
     keep_alive();
 
+    continue_flag = true;
     if (!header_is_ready_) {
         header_data_.append_data(data, data_size);
         int ret = analyze_header();
         if (ret != 0) {
-            callback_->on_close(remote_endpoint_);
-            return;
+            return -1;
         }
 
         if (!header_is_ready_) {
-            try_read();
-            return;
+            return 0;
         }
 
         char* start = header_data_.data() + content_start_;
@@ -75,32 +108,93 @@ void http_session::on_read(int ret_code, const char* data, size_t data_size) {
         content_data_.append_data(data, data_size);
     }
 
-    if ((request_->content_length_ == 0) || (request_->method_ == "GET")) {
+    if (request_->method_ == "OPTIONS") {
+        if (!response_ptr_) {
+            response_ptr_ = std::make_shared<http_response>(this);
+        }
+        /*
+        HTTP/1.1 200
+        Date: Fri, 22 Apr 2022 11:29:50 GMT
+        Content-Length: 0
+        Connection: keep-alive
+        Vary: Origin
+        Vary: Access-Control-Request-Method
+        Vary: Access-Control-Request-Headers
+        Access-Control-Allow-Origin: *
+        Access-Control-Allow-Methods: POST
+        Access-Control-Allow-Headers: content-type
+        Access-Control-Max-Age: 1800
+        Allow: GET, HEAD, POST, PUT, DELETE, TRACE, OPTIONS, PATCH
+        */
+        response_ptr_->add_header("Vary", "Origin");
+        response_ptr_->add_header("Vary", "Access-Control-Request-Method");
+        response_ptr_->add_header("Vary", "Access-Control-Request-Headers");
+        response_ptr_->add_header("Access-Control-Allow-Origin", "*");
+        response_ptr_->add_header("Access-Control-Allow-Methods", "POST");
+        response_ptr_->add_header("Access-Control-Allow-Headers", "content-type");
+        response_ptr_->add_header("Allow", "GET, HEAD, POST, PUT, DELETE, TRACE, OPTIONS, PATCH");
+        //response_ptr_->write(nullptr, 0);
+        header_is_ready_ = false;
+        header_data_.reset();
+        return 0;
+    }
+
+    if (request_->method_ == "GET") {
         HTTP_HANDLE_Ptr handle_ptr = callback_->get_handle(request_);
         if (!handle_ptr) {
-            close();
-            return;
+            return -1;
         }
         //call handle
         response_ptr_ = std::make_shared<http_response>(this);
-        handle_ptr(request_, response_ptr_);
-        return;
+        try {
+            handle_ptr(request_, response_ptr_);
+        } catch(const std::exception& e) {
+            std::cout << "http get exception:" << e.what() << "\r\n";
+        }
+        continue_flag = response_ptr_->continue_flag_;
+        return 0;
     }
 
     if ((int)content_data_.data_len() >= request_->content_length_) {
         HTTP_HANDLE_Ptr handle_ptr = callback_->get_handle(request_);
         if (!handle_ptr) {
-            close();
-            return;
+            return -1;
         }
         //call handle
-        response_ptr_ = std::make_shared<http_response>(this);
+        if (!response_ptr_) {
+            response_ptr_ = std::make_shared<http_response>(this);
+        }
         request_->content_body_ = content_data_.data();
-        handle_ptr(request_, response_ptr_);
+        try {
+            handle_ptr(request_, response_ptr_);
+        } catch(const std::exception& e) {
+            std::cout << "http post exception:" << e.what() << "\r\n";
+        }
+        continue_flag = response_ptr_->continue_flag_;
+
+        if (!continue_flag) {
+            update_max(0);
+        }
+        return 0;
+    }
+
+    return 0;
+}
+
+void http_session::on_read(int ret_code, const char* data, size_t data_size) {
+    if (ret_code != 0) {
+        close();
         return;
     }
 
-    try_read();
+    int ret = handle_request(data, data_size, continue_flag_);
+    if (ret < 0) {
+        close();
+        return;
+    }
+    if (continue_flag_) {
+        try_read();
+    }
     return;
 }
 
@@ -131,7 +225,12 @@ int http_session::analyze_header() {
     }
 
     request_->method_ = version_vec[0];
-    request_->uri_ = version_vec[1];
+
+    if (get_uri_and_params(version_vec[1], request_->uri_, request_->params) < 0) {
+        log_errorf("the uri is error:%s", version_vec[1].c_str());
+        return -1;
+    }
+
     const std::string& version_info = version_vec[2];
     pos = version_info.find("HTTP");
     if (pos == version_info.npos) {

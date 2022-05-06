@@ -4,6 +4,10 @@
 #include "utils/timeex.hpp"
 
 c1s1_handle::c1s1_handle() {
+    digest_random0_ = nullptr;
+    digest_random1_ = nullptr;
+    digest_random0_size_ = 0;
+    digest_random1_size_ = 0;
 }
 
 c1s1_handle::~c1s1_handle() {
@@ -15,9 +19,11 @@ c1s1_handle::~c1s1_handle() {
     }
     if (digest_random0_) {
         delete[] digest_random0_;
+        digest_random0_ = nullptr;
     }
     if (digest_random1_) {
         delete[] digest_random1_;
+        digest_random1_ = nullptr;
     }
 }
 
@@ -109,12 +115,20 @@ int c1s1_handle::make_c0c1(char* c0c1_data) {
     write_4bytes(p, c1_digest_offset_);
     p += 4;
 
+    if ((digest_random0_ == nullptr) || (digest_random0_size_ <= 0)) {
+        delete[] c1_digest;
+        return -1;
+    }
     memcpy(p, digest_random0_, digest_random0_size_);
     p += digest_random0_size_;
 
     memcpy(p, c1_digest, 32);
     p += 32;
     delete[] c1_digest;
+
+    if ((digest_random1_ == nullptr) || (digest_random1_size_ <= 0)) {
+        return -1;
+    }
     memcpy(p, digest_random1_, digest_random1_size_);
     p += digest_random1_size_;
 
@@ -209,6 +223,9 @@ int c1s1_handle::parse_key(uint8_t* data) {
     assert(real_offset < (764 - sizeof(uint32_t)));
     key_random0_size_ = real_offset;
     assert(key_random0_size_ < (764 - sizeof(uint32_t)));
+    if (key_random0_) {
+        delete[] key_random0_;
+    }
     key_random0_ = new char[key_random0_size_];
     memcpy(key_random0_, p, key_random0_size_);
     p += key_random0_size_;
@@ -218,6 +235,9 @@ int c1s1_handle::parse_key(uint8_t* data) {
 
     key_random1_size_ = 764 - real_offset - 128 - 4;
     assert(key_random1_size_ < (764 - sizeof(uint32_t)));
+    if (key_random1_) {
+        delete[] key_random1_;
+    }
     key_random1_ = new char[key_random1_size_];
     memcpy(key_random1_, p, key_random1_size_);
     p += key_random1_size_ + 4;
@@ -241,6 +261,9 @@ int c1s1_handle::parse_digest(uint8_t* data) {
     uint32_t real_offset = calc_valid_digest_offset(c1_digest_offset_);
     digest_random0_size_ = real_offset;
     assert(digest_random0_size_ < (764 - sizeof(uint32_t)));
+    if (digest_random0_) {
+        delete[] digest_random0_;
+    }
     digest_random0_ = new char[digest_random0_size_];
     memcpy(digest_random0_, p, digest_random0_size_);
     p += digest_random0_size_;
@@ -250,6 +273,9 @@ int c1s1_handle::parse_digest(uint8_t* data) {
 
     digest_random1_size_ = 764 - 4 - real_offset - 32;
     assert(digest_random1_size_ < (764 - sizeof(uint32_t)));
+    if (digest_random1_) {
+        delete[] digest_random1_;
+    }
     digest_random1_ = new char[digest_random1_size_];
     memcpy(digest_random1_, p, digest_random1_size_);
 

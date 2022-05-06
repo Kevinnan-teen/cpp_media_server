@@ -8,6 +8,8 @@
 #include "net/webrtc/srtp_session.hpp"
 #include "net/webrtc/rtmp2rtc.hpp"
 #include "net/hls/hls_writer.hpp"
+#include "net/httpapi/httpapi_server.hpp"
+#include "net/rtmp/rtmp_relay_mgr.hpp"
 #include "utils/byte_crypto.hpp"
 #include "utils/config.hpp"
 #include "utils/av/media_stream_manager.hpp"
@@ -20,6 +22,9 @@
 class MediaServer
 {
 public:
+    friend void on_play_callback(const std::string& key);
+
+public:
     static void Run(const std::string& cfg_file);
     static boost::asio::io_context& get_io_ctx() { return MediaServer::io_context; }
 
@@ -29,6 +34,7 @@ private:
     static void create_httpflv();
     static void create_hls();
     static void create_websocket_flv();
+    static void create_httpapi();
 
     static void release_all();
 
@@ -47,10 +53,14 @@ private:
     static std::shared_ptr<httpflv_server> httpflv_ptr;
 
 private:
+    static std::shared_ptr<httpapi_server> httpapi_ptr;
+
+private:
     static hls_writer* hls_output;
 
 private:
-    static std::shared_ptr<websocket_server> ws_flv_ptr;
+    static websocket_server* ws_flv_p;
+    static rtmp_relay_manager* relay_mgr_p;
 };
 
 #endif

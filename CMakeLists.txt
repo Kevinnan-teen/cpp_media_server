@@ -174,6 +174,8 @@ add_executable(cpp_media_server
             src/net/rtmp/rtmp_handshake.cpp
             src/net/rtmp/chunk_stream.cpp
             src/net/rtmp/rtmp_writer.cpp
+            src/net/rtmp/rtmp_relay.cpp
+            src/net/rtmp/rtmp_relay_mgr.cpp
             src/net/rtprtcp/rtp_packet.cpp
             src/net/websocket/ws_server.cpp
             src/net/websocket/ws_session.cpp
@@ -207,6 +209,7 @@ add_executable(cpp_media_server
             src/net/webrtc/libwebrtc/modules/remote_bitrate_estimator/remote_bitrate_estimator_abs_send_time.cc
             src/net/httpflv/httpflv_server.cpp
             src/net/httpflv/httpflv_writer.cpp
+            src/net/httpapi/httpapi_server.cpp
             src/utils/logger.cpp
             src/utils/config.cpp
             src/utils/data_buffer.cpp

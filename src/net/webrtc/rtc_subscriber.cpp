@@ -1,12 +1,13 @@
 #include "rtc_subscriber.hpp"
 #include "rtc_base_session.hpp"
 #include "net/rtprtcp/rtp_packet.hpp"
+#include "utils/byte_crypto.hpp"
 #include "logger.hpp"
 
 extern boost::asio::io_context& get_global_io_context();
 
 rtc_subscriber::rtc_subscriber(const std::string& roomId, const std::string& uid, const std::string& remote_uid, const std::string& pid
-    , rtc_base_session* session, const MEDIA_RTC_INFO& media_info, room_callback_interface* room_cb):timer_interface(get_global_io_context(), 500)
+    , rtc_base_session* session, const MEDIA_RTC_INFO& media_info, room_callback_interface* room_cb):timer_interface(get_global_io_context(), 50)
             , roomId_(roomId)
             , uid_(uid)
             , remote_uid_(remote_uid)
@@ -73,10 +74,33 @@ payload:%d, has rtx:%d, rtx payload:%d, mid:%d, id:%s",
 
 rtc_subscriber::~rtc_subscriber() {
     stop_timer();
+
+    stream_ptr_ = nullptr;
     log_infof("rtc_subscriber destruct media type:%s, rtp ssrc:%u, rtx ssrc:%u, clock rate:%d, \
 payload:%d, has rtx:%d, rtx payload:%d, mid:%d, id:%s",
         media_type_.c_str(), rtp_ssrc_, rtx_ssrc_, clock_rate_, payloadtype_,
         has_rtx_, rtx_payloadtype_, mid_, sid_.c_str());
+}
+
+void rtc_subscriber::get_statics(json& json_data) {
+    json_data["uid"] = uid_;
+    json_data["remote_uid"] = remote_uid_;
+    json_data["stream"] = (stream_type_ == RTC_STREAM_TYPE) ? "rtc" : "live";
+    json_data["media"] = media_type_;
+    json_data["mid"] = mid_;
+    json_data["src_mid"] = src_mid_;
+    json_data["ssrc"] = rtp_ssrc_;
+    json_data["rtx_ssrc"] = rtx_ssrc_;
+    json_data["clockrate"] = clock_rate_;
+    json_data["payload"] = payloadtype_;
+    json_data["rtx_payload"] = rtx_payloadtype_;
+
+    if (!stream_ptr_) {
+        return;
+    }
+    stream_ptr_->get_statics(json_data);
+    
+    return;
 }
 
 void rtc_subscriber::send_rtp_packet(const std::string& roomId, const std::string& media_type,
@@ -99,7 +123,6 @@ void rtc_subscriber::send_rtp_packet(const std::string& roomId, const std::strin
     }
     //update payload&ssrc in subscriber
     stream_ptr_->on_send_rtp_packet(pkt);
-
     session_->send_rtp_data_in_dtls(pkt->get_data(), pkt->get_data_length());
 
     pkt->set_ssrc(origin_ssrc);
@@ -116,7 +139,8 @@ void rtc_subscriber::handle_rtcp_rr(rtcp_rr_packet* rr_pkt) {
 }
 
 void rtc_subscriber::on_timer() {
-    stream_ptr_->on_timer();
+    int64_t now_ms = (int64_t)now_millisec();
+    stream_ptr_->on_timer(now_ms);
 }
 
 void rtc_subscriber::stream_send_rtcp(uint8_t* data, size_t len) {
@@ -130,4 +154,12 @@ void rtc_subscriber::stream_send_rtp(uint8_t* data, size_t len) {
 
 void rtc_subscriber::request_keyframe() {
     room_cb_->on_request_keyframe(pid_, sid_, rtp_ssrc_);
+}
+
+void rtc_subscriber::update_alive(int64_t now_ms) {
+    room_cb_->on_update_alive(roomId_, uid_, now_ms);
+}
+
+void rtc_subscriber::set_remb_bitrate(int64_t bitrate) {
+    remb_bitrate_ = bitrate;
 }

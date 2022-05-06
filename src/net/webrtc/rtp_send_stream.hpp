@@ -8,10 +8,13 @@
 #include "utils/stream_statics.hpp"
 #include "utils/timeex.hpp"
 #include "rtc_stream_pub.hpp"
+#include "json.hpp"
 #include <stdint.h>
 #include <stddef.h>
 #include <string>
 #include <map>
+
+using json = nlohmann::json;
 
 typedef struct NACK_PACKET_S {
     uint32_t last_sent_timestamp;
@@ -41,9 +44,10 @@ public:
     void set_rtx_ssrc(uint32_t ssrc) { rtx_ssrc_ = ssrc; }
     uint32_t get_rtx_ssrc() { return rtx_ssrc_; }
 
+    void get_statics(json& json_data);
 
 public:
-    void on_timer();
+    void on_timer(int64_t now_ms);
 
 public:
     void on_send_rtp_packet(rtp_packet* pkt);
@@ -72,18 +76,21 @@ private:
 
 private:
     stream_statics send_statics_;
-    int64_t time_count_ = 0;
+    int64_t last_statics_ms_ = 0;
 
 private:
     uint32_t last_sr_rtp_ts_ = 0;
     NTP_TIMESTAMP last_sr_ntp_ts_;
-    int rtt_     = RTT_DEFAULT;
-    int avg_rtt_ = 0;
+    float rtt_     = RTT_DEFAULT * 1.0;
+    float avg_rtt_ = 0;
 
 private://for rtcp rr
     float lost_rate_     = 0.0;
     uint32_t lost_total_ = 0;
     uint32_t jitter_     = 0;
+
+private:
+    int64_t last_send_rtcp_ts_ = 0;
 };
 
 #endif

@@ -157,6 +157,29 @@ bool rtc_publisher::has_rtx() {
     return has_rtx_;
 }
 
+void rtc_publisher::get_statics(json& json_data) {
+    json_data["media"] = media_type_str_;
+    json_data["payload"] = payloadtype_;
+    json_data["rtx_payload"] = rtx_payloadtype_;
+    json_data["clockrate"] = clock_rate_;
+    json_data["codec"] =  codectype_tostring(codec_type_);
+    json_data["stream"] = stream_type_;
+    json_data["ssrc"] = rtp_ssrc_;
+    json_data["rtx_ssrc"] = rtx_ssrc_;
+    json_data["rtt"] = rtt_;
+
+    if (media_type_ == MEDIA_AUDIO_TYPE) {
+        json_data["channel"] = channel_;
+    }
+
+    if (rtp_handler_) {
+        rtp_handler_->get_statics(json_data);
+    }
+    
+
+    return;
+}
+
 void rtc_publisher::on_handle_rtppacket(rtp_packet* pkt) {
     //set mid
     pkt->set_mid_extension_id((uint8_t)mid_extension_id_);
@@ -191,11 +214,14 @@ void rtc_publisher::on_handle_rtppacket(rtp_packet* pkt) {
         jb_handler_.input_rtp_packet(roomId_, uid_, media_type_str_, stream_type_, clock_rate_, pkt);
     }
     
+    room_->on_update_alive(roomId_, uid_, pkt->get_local_ms());
     room_->on_rtppacket_publisher2room(this, pkt);
 }
 
 void rtc_publisher::on_handle_rtcp_sr(rtcp_sr_packet* sr_pkt) {
-    rtp_handler_->on_handle_rtcp_sr(sr_pkt);
+    if (rtp_handler_) {
+        rtp_handler_->on_handle_rtcp_sr(sr_pkt);
+    }
 }
 
 void rtc_publisher::stream_send_rtcp(uint8_t* data, size_t len) {
@@ -263,13 +289,22 @@ void rtc_publisher::handle_xr_dlrr(xr_dlrr_data* dlrr_block) {
 }
 
 void rtc_publisher::on_timer() {
-    timer_count_++;
+    const int64_t KEY_INTERVAL = 4000;
+
+    int64_t now_ms = (int64_t)now_millisec();
     if (rtp_handler_) {
-        rtp_handler_->on_timer();
+        rtp_handler_->on_timer(now_ms);
     }
-    if ((timer_count_ % 8 == 0) && (media_type_ == MEDIA_VIDEO_TYPE)) {
-        request_keyframe(rtp_ssrc_);
+    
+    if (last_keyrequest_ts_ == 0) {
+        last_keyrequest_ts_ = now_ms;
+    } else {
+        if (((now_ms - last_keyrequest_ts_) >= KEY_INTERVAL) && (media_type_ == MEDIA_VIDEO_TYPE)) {
+            last_keyrequest_ts_ = now_ms;
+            request_keyframe(rtp_ssrc_);
+        }
     }
+
 }
 
 void rtc_publisher::rtp_packet_reset(std::shared_ptr<rtp_packet_info> pkt_ptr) {

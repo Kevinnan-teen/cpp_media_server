@@ -77,7 +77,7 @@ rtp_packet::rtp_packet(rtp_common_header* header, header_extension* ext,
 }
 
 rtp_packet::~rtp_packet() {
-    uint8_t* data = get_data();
+    uint8_t* data = (uint8_t*)this->header;
     if (this->need_delete && data) {
         delete[] data;
     }
@@ -321,7 +321,7 @@ uint8_t* rtp_packet::get_extension(uint8_t id, uint8_t& len) {
         }
         return ext_data->value;
     } else {
-        log_errorf("the extension bytes type is wrong.")
+        //log_errorf("the extension bytes type is wrong.")
         return nullptr;
     }
 }
@@ -362,7 +362,7 @@ bool rtp_packet::read_abs_time(uint32_t& abs_time_24bits) {
     uint8_t* extern_value = get_extension(this->abs_time_extension_id_, extern_len);
 
     if (extern_value == nullptr) {
-        log_errorf("The rtp packet has not extern abs time id:%d", this->abs_time_extension_id_);
+        //log_errorf("The rtp packet has not extern abs time id:%d", this->abs_time_extension_id_);
         return false;
     }
 

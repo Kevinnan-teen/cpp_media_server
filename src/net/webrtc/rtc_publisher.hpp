@@ -13,12 +13,17 @@
 #include "jitterbuffer.hpp"
 #include "pack_handle_pub.hpp"
 #include "data_buffer.hpp"
+#include "json.hpp"
 
 #include <vector>
 #include <queue>
 #include <stdint.h>
 #include <stddef.h>
 #include <string>
+
+using json = nlohmann::json;
+
+extern int get_publisher_statics(const std::string& roomId, const std::string& uid, json& data_json);
 
 class rtc_base_session;
 class room_callback_interface;
@@ -29,6 +34,9 @@ public:
     rtc_publisher(const std::string& roomId, const std::string& uid,
             room_callback_interface* room, rtc_base_session* session, const MEDIA_RTC_INFO& media_info);
     virtual ~rtc_publisher();
+
+public:
+    friend int get_publisher_statics(const std::string& roomId, const std::string& uid, json& data_json);
 
 public:
     void on_handle_rtppacket(rtp_packet* pkt);
@@ -49,6 +57,7 @@ public:
     void set_stream_type(const std::string& stream_type) { stream_type_ = stream_type; }
     std::string get_stream_type() { return stream_type_; }
     MEDIA_CODEC_TYPE get_codec_type() { return codec_type_; }
+    void get_statics(json& json_data);
 
 public:
     void request_keyframe(uint32_t media_ssrc);
@@ -95,7 +104,6 @@ private:
     bool has_rtx_              = false;
     int mid_extension_id_      = 0;
     int abs_time_extension_id_ = 0;
-    int64_t timer_count_       = 0;
 
 private:
     rtp_recv_stream* rtp_handler_  = nullptr;
@@ -110,6 +118,8 @@ private:
     int64_t last_rrt_ = 0;
     float   rtt_      = 0;
 
+private:
+    int64_t last_keyrequest_ts_ = 0;
 };
 
 #endif

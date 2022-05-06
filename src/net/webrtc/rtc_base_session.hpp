@@ -7,6 +7,8 @@
 #include "utils/timer.hpp"
 #include <vector>
 
+extern int get_publisher_statics(const std::string& roomId, const std::string& uid, json& data_json);
+
 class rtc_publisher;
 class rtc_subscriber;
 class room_callback_interface;
@@ -14,8 +16,12 @@ class room_callback_interface;
 class rtc_base_session
 {
 public:
-    rtc_base_session(const std::string& roomId, const std::string& uid, room_callback_interface* room, int session_direction, const rtc_media_info& media_info);
+    rtc_base_session(const std::string& roomId, const std::string& uid, room_callback_interface* room,
+            int session_direction, const rtc_media_info& media_info, std::string id = "");
     virtual ~rtc_base_session();
+
+public:
+    friend int get_publisher_statics(const std::string& roomId, const std::string& uid, json& data_json);
 
 public:
     std::string get_id() { return id_; }
@@ -66,6 +72,9 @@ protected:
     std::map<int, std::shared_ptr<rtc_subscriber>> mid2subscribers_;         //key: mid, value: rtc_subscriber
     std::map<uint32_t, std::shared_ptr<rtc_subscriber>> ssrc2subscribers_;   //key: ssrc, value: rtc_subscriber
     std::map<std::string, std::shared_ptr<rtc_subscriber>> pid2subscribers_; //key: publisher_id, value: rtc_subscriber
+
+protected:
+    int64_t remb_bitrate_ = 0;
 };
 
 #endif

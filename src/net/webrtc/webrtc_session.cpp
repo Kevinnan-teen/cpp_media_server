@@ -161,8 +161,8 @@ void single_udp_session_callback::on_read(const char* data, size_t data_size, ud
 extern boost::asio::io_context& get_global_io_context();
 
 webrtc_session::webrtc_session(const std::string& roomId, const std::string& uid,
-                room_callback_interface* room, int session_direction,
-                const rtc_media_info& media_info):rtc_base_session(roomId, uid, room, session_direction, media_info)
+                room_callback_interface* room, int session_direction, const rtc_media_info& media_info,
+                std::string id):rtc_base_session(roomId, uid, room, session_direction, media_info, id)
             , timer_interface(get_global_io_context(), 500)
             , bitrate_estimate_(this) {
     username_fragment_ = byte_crypto::get_random_string(16);
@@ -282,6 +282,7 @@ void webrtc_session::send_rtp_data_in_dtls(uint8_t* data, size_t data_len) {
         log_errorf("dtls writer is not ready");
         return;
     }
+    
     bool ret = write_srtp_->encrypt_rtp(const_cast<uint8_t**>(&data), &data_len);
     if (!ret) {
         return;
@@ -292,11 +293,11 @@ void webrtc_session::send_rtp_data_in_dtls(uint8_t* data, size_t data_len) {
 
 void webrtc_session::send_rtcp_data_in_dtls(uint8_t* data, size_t data_len) {
     if(!write_srtp_) {
-        log_errorf("dtls writer is not ready");
         return;
     }
     bool ret = write_srtp_->encrypt_rtcp(const_cast<uint8_t**>(&data), &data_len);
     if (!ret) {
+        log_errorf("encrypt rtcp error");
         return;
     }
     write_udp_data(data, data_len, remote_address_);
@@ -576,7 +577,6 @@ void webrtc_session::handle_rtcp_xr(uint8_t* data, size_t data_len) {
     return;
 }
 
-
 void webrtc_session::handle_xr_dlrr(xr_dlrr_data* dlrr_block) {
     uint32_t media_ssrc = ntohl(dlrr_block->ssrc);
     std::shared_ptr<rtc_publisher> publisher_ptr = get_publisher(media_ssrc);
@@ -595,6 +595,7 @@ void webrtc_session::handle_rtcp_psfb(uint8_t* data, size_t data_len) {
         return;
     }
 
+    int64_t now_ms = now_millisec();
     try {
         rtcp_fb_common_header* header = (rtcp_fb_common_header*)data;
         switch (header->fmt)
@@ -617,14 +618,33 @@ void webrtc_session::handle_rtcp_psfb(uint8_t* data, size_t data_len) {
                             pspli_pkt->get_media_ssrc(), pspli_pkt->get_sender_ssrc());
                     return;
                 }
-
+                subscriber_ptr->update_alive(now_ms);
                 subscriber_ptr->request_keyframe();
                 
                 break;
             }
-            
+            case FB_PS_AFB:
+            {
+                rtcpfb_remb* remb_pkt = rtcpfb_remb::parse(data, data_len);
+                if (!remb_pkt) {
+                    break;
+                }
+                //log_infof("subscriber bitrate:%ld", remb_pkt->get_bitrate());
+                remb_bitrate_ = remb_pkt->get_bitrate();
+                std::vector<uint32_t> ssrcs = remb_pkt->get_ssrcs();
+
+                for (auto ssrc : ssrcs) {
+                    auto iter = ssrc2subscribers_.find(ssrc);
+                    if (iter != ssrc2subscribers_.end()) {
+                        iter->second->set_remb_bitrate(remb_bitrate_);
+                    }
+                }
+                delete remb_pkt;
+                break;
+            }
             default:
             {
+                log_debugf("rtcp psfb doesn't handle fmt:%d", header->fmt);
                 break;
             }
         }
@@ -639,6 +659,7 @@ void webrtc_session::handle_rtcp_rtpfb(uint8_t* data, size_t data_len) {
     if (data_len <=sizeof(rtcp_fb_common_header)) {
         return;
     }
+    int64_t now_ms = now_millisec();
     try {
         rtcp_fb_common_header* header = (rtcp_fb_common_header*)data;
         switch (header->fmt)
@@ -647,11 +668,11 @@ void webrtc_session::handle_rtcp_rtpfb(uint8_t* data, size_t data_len) {
             {
                 rtcp_fb_nack* nack_pkt = rtcp_fb_nack::parse(data, data_len);
                 uint32_t media_ssrc = nack_pkt->get_media_ssrc();
-                log_infof("receive rtcp nack len:%lu, media ssrc:%u", data_len, media_ssrc);
                 std::shared_ptr<rtc_subscriber> subscriber_ptr = get_subscriber(media_ssrc);
                 if (!subscriber_ptr) {
                     return;
                 }
+                subscriber_ptr->update_alive(now_ms);
                 subscriber_ptr->handle_fb_rtp_nack(nack_pkt);
                 break;
             }
@@ -693,12 +714,15 @@ void webrtc_session::handle_rtcp_rr(uint8_t* data, size_t data_len) {
     if (data_len <=sizeof(rtcp_common_header)) {
         return;
     }
+    
+    int64_t now_ms = now_millisec();
     try {
         rtcp_rr_packet* rr_pkt = rtcp_rr_packet::parse(data, data_len);
         std::shared_ptr<rtc_subscriber> subscriber_ptr = get_subscriber(rr_pkt->get_reportee_ssrc());
         if (!subscriber_ptr) {
             log_errorf("fail to get subscribe by ssrc:%u for rtcp rr", rr_pkt->get_reportee_ssrc());
         } else {
+            subscriber_ptr->update_alive(now_ms);
             subscriber_ptr->handle_rtcp_rr(rr_pkt);
             //handl rtcp rr;
         }

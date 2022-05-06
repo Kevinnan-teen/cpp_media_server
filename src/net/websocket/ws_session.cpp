@@ -7,18 +7,16 @@
 websocket_session::websocket_session(boost::asio::io_context& io_ctx,
     boost::asio::ip::tcp::socket&& socket,
     websocket_server_callbackI* cb,
-    std::string id):io_ctx_(io_ctx)
-    , server_cb_(cb)
-    , stream_id_(id)
+    std::string id):server_cb_(cb)
+                , stream_id_(id)
 {
     ws_  = new boost::beast::websocket::stream<boost::beast::tcp_stream>(std::move(socket));
     wss_ = nullptr;
 }
 
 websocket_session::websocket_session(boost::asio::io_context& io_ctx, boost::asio::ip::tcp::socket&& socket, boost::asio::ssl::context& ctx,
-            websocket_server_callbackI* cb, std::string id):io_ctx_(io_ctx)
-    , server_cb_(cb)
-    , stream_id_(id)
+            websocket_server_callbackI* cb, std::string id):server_cb_(cb)
+                                                        , stream_id_(id)
 {
     ws_  = nullptr;
     wss_ = new boost::beast::websocket::stream<boost::beast::ssl_stream<boost::beast::tcp_stream>>(std::move(socket), ctx);
@@ -138,7 +136,8 @@ void websocket_session::async_write(const char* data, int len) {
     send_buffer.commit(len);
 
     send_buffer_queue_.push(send_buffer);
-    io_ctx_.post(std::bind(&websocket_session::do_write, this));
+
+    do_write();
     return;
 }
 

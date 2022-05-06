@@ -8,6 +8,7 @@
 #include "net/rtprtcp/rtp_packet.hpp"
 #include "net/rtprtcp/rtcpfb_nack.hpp"
 #include "net/rtprtcp/rtcp_rr.hpp"
+#include "json.hpp"
 #include <string>
 #include <stdint.h>
 #include <stddef.h>
@@ -19,6 +20,8 @@ typedef enum
     LIVE_STREAM_TYPE
 } SOURCE_STREAM_TYPE;
 
+using json = nlohmann::json;
+
 class rtc_base_session;
 class room_callback_interface;
 
@@ -27,7 +30,7 @@ class rtc_subscriber : public timer_interface, public rtc_stream_callback
 public:
     rtc_subscriber(const std::string& roomId, const std::string& uid, const std::string& remote_uid, const std::string& pid
             , rtc_base_session* session, const MEDIA_RTC_INFO& media_info, room_callback_interface* room_cb);
-    ~rtc_subscriber();
+    virtual ~rtc_subscriber();
 
 public:
     std::string get_roomid() {return roomId_;}
@@ -43,6 +46,10 @@ public:
     int get_clockrate() { return clock_rate_; }
     void set_stream_type(SOURCE_STREAM_TYPE stream_type) { stream_type_ = stream_type; }
     SOURCE_STREAM_TYPE get_stream_type() { return stream_type_; }
+    int64_t get_remb_bitrate() { return remb_bitrate_; }
+    void set_remb_bitrate(int64_t bitrate);
+    void get_statics(json& json_data);
+    void update_alive(int64_t now_ms);
 
 public:
     void send_rtp_packet(const std::string& roomId, const std::string& media_type,
@@ -82,6 +89,9 @@ private:
 
 private:
     room_callback_interface* room_cb_ = nullptr;
+
+private:
+    int64_t remb_bitrate_ = 0;
 };
 
 
